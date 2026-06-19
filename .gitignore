@@ -46,6 +46,7 @@ pgm_output/
 pgm_*/
 *.pgm
 manifest.csv
+pgm_preview*.png
 
 # Build artifacts
 *.o
