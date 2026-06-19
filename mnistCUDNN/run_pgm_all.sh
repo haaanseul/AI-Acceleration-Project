@@ -17,7 +17,7 @@ if [[ -z "${YOLO_WEIGHTS:-}" ]]; then
         "$ROOT_DIR/weights/best.engine"
         "$ROOT_DIR/weights/best.pt"
         "$ROOT_DIR/yolo/runs/detect/digit_mixed_big/weights/best.engine"
-        "$ROOT_DIR/yolo/runs/detect/digit_mixed_big/weights/best.pt"
+        "$ROOT_DIR/yolo/weights/digit_mixed_best.pt"
     )
     for candidate in "${weight_candidates[@]}"; do
         if [[ -f "$candidate" ]]; then
