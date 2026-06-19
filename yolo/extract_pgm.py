@@ -47,6 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--event-present-frames", type=int, default=3)
     parser.add_argument("--event-confirm-conf", type=float, default=0.8)
     parser.add_argument("--event-confirm-frames", type=int, default=3)
+    parser.add_argument("--event-save-delay-frames", type=int, default=12, help="Wait this many frames after a new event before selecting the saved crop.")
     parser.add_argument("--min-box-area-ratio", type=float, default=0.02)
     parser.add_argument("--max-box-area-ratio", type=float, default=0.75)
     parser.add_argument("--edge-margin-ratio", type=float, default=0.06)
@@ -242,6 +243,22 @@ def flush_event(
     return event_index + 1
 
 
+def update_event_best(
+    best: Candidate | None,
+    fallback: Candidate | None,
+    current: Candidate,
+    event_start_frame: int,
+    args: argparse.Namespace,
+) -> tuple[Candidate | None, Candidate | None]:
+    if current.conf >= args.event_confirm_conf:
+        if fallback is None or current.conf > fallback.conf:
+            fallback = current
+        if current.frame_index - event_start_frame >= args.event_save_delay_frames:
+            if best is None or current.score > best.score:
+                best = current
+    return best, fallback
+
+
 def main() -> int:
     args = parse_args()
     global cv2, np
@@ -287,6 +304,10 @@ def main() -> int:
     active = False
     missing_frames = 0
     event_index = 0
+    event_frames = 0
+    event_start_frame = -10**9
+    best: Candidate | None = None
+    fallback: Candidate | None = None
     track: Candidate | None = None
     changed_frames = 0
     present_frames = 0
@@ -311,8 +332,15 @@ def main() -> int:
             if active:
                 missing_frames += 1
                 if missing_frames >= args.end_missing_frames:
+                    if event_frames >= args.min_event_frames:
+                        event_index = flush_event(best or fallback, output_dir, event_index, rows)
+                        if args.target_count and event_index >= args.target_count:
+                            break
                     active = False
                     missing_frames = 0
+                    event_frames = 0
+                    best = None
+                    fallback = None
                     track = None
             continue
 
@@ -330,11 +358,12 @@ def main() -> int:
                 and confirm_frames >= args.event_confirm_frames
                 and frame_index - last_event_frame >= args.event_cooldown_frames
             ):
-                event_index = flush_event(current, output_dir, event_index, rows)
                 last_event_frame = frame_index
-                if args.target_count and event_index >= args.target_count:
-                    break
                 active = True
+                event_start_frame = frame_index
+                event_frames = 0
+                best = None
+                fallback = current
                 track = current
                 changed_frames = 0
             else:
@@ -350,15 +379,28 @@ def main() -> int:
                 track = current
 
             if changed_frames >= args.event_change_frames and confirm_frames >= args.event_confirm_frames:
-                event_index = flush_event(current, output_dir, event_index, rows)
+                if event_frames >= args.min_event_frames:
+                    event_index = flush_event(best or fallback, output_dir, event_index, rows)
+                    if args.target_count and event_index >= args.target_count:
+                        break
                 last_event_frame = frame_index
-                if args.target_count and event_index >= args.target_count:
-                    break
                 active = True
+                event_start_frame = frame_index
+                event_frames = 0
+                best = None
+                fallback = current
                 track = current
                 changed_frames = 0
 
+        event_frames += 1
+        if active:
+            best, fallback = update_event_best(best, fallback, current, event_start_frame, args)
+
     cap.release()
+
+    if active and (not args.target_count or event_index < args.target_count):
+        if event_frames >= args.min_event_frames:
+            event_index = flush_event(best or fallback, output_dir, event_index, rows)
 
     if rows:
         with manifest_path.open("w", newline="", encoding="utf-8") as f:
