@@ -899,7 +899,7 @@ int main(int argc, char *argv[])
                                  "image", (char **) &image_name);        
 
         network_t<float> mnist;
-        mnist.setConvolutionAlgorithm(CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_GEMM);
+        mnist.setConvolutionAlgorithm(CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_PRECOMP_GEMM);
         Layer_t<float> conv1(1,20,5,conv1_bin,conv1_bias_bin,argv[0]);
         Layer_t<float> conv2(20,50,5,conv2_bin,conv2_bias_bin,argv[0]);
         Layer_t<float>   ip1(800,500,1,ip1_bin,ip1_bias_bin,argv[0]);
