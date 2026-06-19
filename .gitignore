@@ -56,6 +56,7 @@ mnistCUDNN/mnistCUDNN
 mnistCUDNN/*.o
 
 # Logs and temporary files
+torchvision/
 *.log
 *.tmp
 *.bak

@@ -78,7 +78,7 @@ endif
 HOST_COMPILER ?= g++
 #MY CODE START
 # NVCC          := $(CUDA_PATH)/bin/nvcc -ccbin $(HOST_COMPILER)
-NVCC := /usr/local/cuda/bin/nvcc -ccbin $(HOST_COMPILER)
+NVCC := $(CUDA_PATH)/bin/nvcc -ccbin $(HOST_COMPILER)
 #MY CODE END
 
 # internal flags
@@ -145,7 +145,11 @@ LIBRARIES :=
 ################################################################################
 
 # Gencode arguments
-SMS ?= 30 35 50 53
+ifeq ($(TARGET_ARCH),aarch64)
+SMS ?= 87
+else
+SMS ?= 75 80 86
+endif
 
 ifeq ($(SMS),)
 $(info >>> WARNING - no SM architectures have been specified - waiving sample <<<)
@@ -165,7 +169,7 @@ endif
 # endif
 #SMS := 75
 
-SMS := 75 80 86
+# SMS defaults are selected above and can be overridden, e.g. make SMS=87
 
 ifeq ($(GENCODE_FLAGS),)
 # Generate SASS code for each SM architecture listed in $(SMS)
