@@ -12,11 +12,8 @@ YOLO_SCRIPT="${YOLO_SCRIPT:-$ROOT_DIR/yolo/extract_pgm.py}"
 
 if [[ -z "${YOLO_WEIGHTS:-}" ]]; then
     weight_candidates=(
-        "$ROOT_DIR/weights/yolo_digit_best.engine"
-        "$ROOT_DIR/weights/yolo_digit_best.pt"
-        "$ROOT_DIR/weights/best.engine"
+        "$ROOT_DIR/weights/digit_mixed_best.pt"
         "$ROOT_DIR/weights/best.pt"
-        "$ROOT_DIR/yolo/runs/detect/digit_mixed_big/weights/best.engine"
         "$ROOT_DIR/yolo/runs/detect/digit_mixed_big/weights/best.pt"
         "$ROOT_DIR/yolo/weights/digit_mixed_best.pt"
     )
@@ -70,7 +67,7 @@ require_file() {
 
 if [[ "$RUN_YOLO" == "1" ]]; then
     require_file "$YOLO_SCRIPT" "YOLO script not found"
-    require_file "$YOLO_WEIGHTS" "YOLO weights not found. Copy best.pt or best.engine into weights/"
+    require_file "$YOLO_WEIGHTS" "YOLO weights not found. Copy digit_mixed_best.pt into weights/"
     require_file "$VIDEO" "Input video not found"
 
     yolo_args=(

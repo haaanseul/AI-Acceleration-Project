@@ -12,7 +12,7 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--video", default="number.mp4", help="Input video path.")
-    parser.add_argument("--weights", default="", help="YOLO weights path, .pt or .engine.")
+    parser.add_argument("--weights", default="", help="YOLO weights path, .pt.")
     parser.add_argument("--output", default="preview_yolo.mp4", help="Annotated output video path.")
     parser.add_argument("--device", default="0")
     parser.add_argument("--imgsz", type=int, default=640)
@@ -105,12 +105,10 @@ def find_weights(requested: str) -> Path:
 
     root = Path(__file__).resolve().parent.parent
     candidates = [
-        root / "weights" / "yolo_digit_best.engine",
-        root / "weights" / "yolo_digit_best.pt",
-        root / "weights" / "best.engine",
+        root / "weights" / "digit_mixed_best.pt",
         root / "weights" / "best.pt",
-        root / "yolo" / "runs" / "detect" / "digit_mixed_big" / "weights" / "best.engine",
         root / "yolo" / "runs" / "detect" / "digit_mixed_big" / "weights" / "best.pt",
+        root / "yolo" / "weights" / "digit_mixed_best.pt",
     ]
     for candidate in candidates:
         if candidate.exists():
