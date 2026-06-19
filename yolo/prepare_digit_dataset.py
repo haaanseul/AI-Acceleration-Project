@@ -339,8 +339,12 @@ def add_negative_images(
 
 
 def write_yaml(dataset_dir: Path) -> None:
+    try:
+        dataset_path = dataset_dir.resolve().relative_to(Path.cwd().resolve()).as_posix()
+    except ValueError:
+        dataset_path = dataset_dir.name
     yaml_text = (
-        f"path: {dataset_dir.resolve().as_posix()}\n"
+        f"path: {dataset_path}\n"
         "train: images/train\n"
         "val: images/val\n"
         "names:\n"
