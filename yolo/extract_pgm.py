@@ -33,7 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--imgsz", type=int, default=640, help="YOLO inference image size.")
     parser.add_argument("--conf", type=float, default=0.35, help="YOLO confidence threshold.")
     parser.add_argument("--half", action="store_true", help="Use FP16 PyTorch inference where supported.")
-    parser.add_argument("--frame-stride", type=int, default=2, help="Run YOLO every N frames.")
+    parser.add_argument("--frame-stride", type=int, default=1, help="Run YOLO every N frames.")
     parser.add_argument("--target-count", type=int, default=0, help="Stop after this many PGM files.")
     parser.add_argument("--clear-output", action="store_true", help="Remove old .pgm files first.")
     parser.add_argument("--event-mode", default="box", choices=("box",), help="Kept for command compatibility; only box mode is supported.")
@@ -180,7 +180,12 @@ def best_detection(model, frame: np.ndarray, args: argparse.Namespace) -> Candid
     label = sanitize_label(names.get(cls_id, str(cls_id)), cls_id)
     box = tuple(float(v) for v in xyxy[index])
     pgm, quality = preprocess_digit(frame, box, args.pad)
-    score = float(confs[index]) + min(quality / 1000.0, 0.5)
+    x1, y1, x2, y2 = box
+    area_ratio = max(0.0, float((x2 - x1) * (y2 - y1)) / frame_area)
+    cx = (x1 + x2) * 0.5 / max(1.0, width)
+    cy = (y1 + y2) * 0.5 / max(1.0, height)
+    center_bias = 1.0 - min(1.0, abs(cx - 0.5) + abs(cy - 0.5))
+    score = float(confs[index]) + 0.15 * center_bias + 0.05 * min(area_ratio / 0.25, 1.0)
     return Candidate(
         frame_index=0,
         cls_id=cls_id,
@@ -281,9 +286,7 @@ def main() -> int:
 
     active = False
     missing_frames = 0
-    event_frames = 0
     event_index = 0
-    best: Candidate | None = None
     track: Candidate | None = None
     changed_frames = 0
     present_frames = 0
@@ -308,15 +311,8 @@ def main() -> int:
             if active:
                 missing_frames += 1
                 if missing_frames >= args.end_missing_frames:
-                    if event_frames >= args.min_event_frames:
-                        event_index = flush_event(best, output_dir, event_index, rows)
-                        last_event_frame = frame_index
-                        if args.target_count and event_index >= args.target_count:
-                            break
                     active = False
                     missing_frames = 0
-                    event_frames = 0
-                    best = None
                     track = None
             continue
 
@@ -334,9 +330,11 @@ def main() -> int:
                 and confirm_frames >= args.event_confirm_frames
                 and frame_index - last_event_frame >= args.event_cooldown_frames
             ):
+                event_index = flush_event(current, output_dir, event_index, rows)
+                last_event_frame = frame_index
+                if args.target_count and event_index >= args.target_count:
+                    break
                 active = True
-                event_frames = 0
-                best = None
                 track = current
                 changed_frames = 0
             else:
@@ -352,26 +350,15 @@ def main() -> int:
                 track = current
 
             if changed_frames >= args.event_change_frames and confirm_frames >= args.event_confirm_frames:
-                if event_frames >= args.min_event_frames:
-                    event_index = flush_event(best, output_dir, event_index, rows)
-                    last_event_frame = frame_index
-                    if args.target_count and event_index >= args.target_count:
-                        break
+                event_index = flush_event(current, output_dir, event_index, rows)
+                last_event_frame = frame_index
+                if args.target_count and event_index >= args.target_count:
+                    break
                 active = True
-                event_frames = 0
-                best = None
                 track = current
                 changed_frames = 0
 
-        event_frames += 1
-        if current.conf >= args.event_confirm_conf and (best is None or current.score > best.score):
-            best = current
-
     cap.release()
-
-    if active and (not args.target_count or event_index < args.target_count):
-        if event_frames >= args.min_event_frames:
-            event_index = flush_event(best, output_dir, event_index, rows)
 
     if rows:
         with manifest_path.open("w", newline="", encoding="utf-8") as f:

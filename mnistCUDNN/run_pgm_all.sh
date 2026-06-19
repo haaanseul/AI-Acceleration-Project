@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
-PGM_DIR="${PGM_DIR:-$ROOT_DIR/pgm_output}"
+PGM_DIR="${PGM_DIR:-$SCRIPT_DIR/pgm_output}"
 EXE="${EXE:-$SCRIPT_DIR/mnistCUDNN}"
 VIDEO="${VIDEO:-$ROOT_DIR/number.mp4}"
 YOLO_SCRIPT="${YOLO_SCRIPT:-$ROOT_DIR/yolo/extract_pgm.py}"
@@ -29,7 +29,7 @@ fi
 YOLO_CONF="${YOLO_CONF:-0.35}"
 YOLO_DEVICE="${YOLO_DEVICE:-0}"
 YOLO_IMGSZ="${YOLO_IMGSZ:-640}"
-YOLO_FRAME_STRIDE="${YOLO_FRAME_STRIDE:-2}"
+YOLO_FRAME_STRIDE="${YOLO_FRAME_STRIDE:-1}"
 YOLO_HALF="${YOLO_HALF:-0}"
 RUN_YOLO="${RUN_YOLO:-1}"
 RUN_MNIST="${RUN_MNIST:-1}"
@@ -110,13 +110,27 @@ fi
 
 mapfile -t images < <(find "$PGM_DIR" -type f -name "*.pgm" | sort -V | head -n "$EVAL_COUNT")
 
+if [[ "${#images[@]}" -eq 0 ]]; then
+    echo "No PGM files found in: $PGM_DIR" >&2
+    echo "YOLO did not save any PGM files, or PGM_DIR points to the wrong directory." >&2
+    exit 1
+fi
+
+if [[ "${#images[@]}" -lt "$EVAL_COUNT" ]]; then
+    echo "Warning: expected $EVAL_COUNT PGM files, found ${#images[@]} in $PGM_DIR" >&2
+fi
+
 total=0
 correct=0
 total_infer_ms=0
 
 for img in "${images[@]}"; do
     echo "================================"
-    display_img="${img#$ROOT_DIR/}"
+    if [[ "$img" == "$SCRIPT_DIR/"* ]]; then
+        display_img="${img#$SCRIPT_DIR/}"
+    else
+        display_img="${img#$ROOT_DIR/}"
+    fi
     echo "INPUT: $display_img"
 
     output=$(cd "$SCRIPT_DIR" && "$EXE" image="$img")
