@@ -1,0 +1,21 @@
+path: /absolute/path/to/digit_dataset
+train: images/train
+val: images/val
+
+# Use one class if YOLO only detects the handwritten digit region.
+# MNIST will do the final digit classification.
+names:
+  0: digit
+
+# If you train YOLO as a 10-class detector instead, replace names with:
+# names:
+#   0: '0'
+#   1: '1'
+#   2: '2'
+#   3: '3'
+#   4: '4'
+#   5: '5'
+#   6: '6'
+#   7: '7'
+#   8: '8'
+#   9: '9'

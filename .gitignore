@@ -1,0 +1,62 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Large local datasets and raw archives
+digit_dataset*/
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+mnist.npz
+
+# Videos and generated previews
+*.mp4
+*.avi
+*.mov
+*.mkv
+*_preview*.mp4
+preview_*.mp4
+
+# YOLO training/inference outputs
+yolo/runs/
+runs/
+weights/
+*.pt
+*.onnx
+*.engine
+*.torchscript
+*.tflite
+*.mlpackage
+*.ncnn
+
+# Generated PGM outputs / manifests
+pgm_output/
+pgm_*/
+*.pgm
+manifest.csv
+
+# Build artifacts
+*.o
+*.so
+*.a
+*.dll
+*.exe
+mnistCUDNN/mnistCUDNN
+mnistCUDNN/*.o
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+*.orig
