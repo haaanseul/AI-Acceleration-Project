@@ -33,6 +33,7 @@ YOLO_FRAME_STRIDE="${YOLO_FRAME_STRIDE:-1}"
 YOLO_HALF="${YOLO_HALF:-0}"
 RUN_YOLO="${RUN_YOLO:-1}"
 RUN_MNIST="${RUN_MNIST:-1}"
+REUSE_PGM="${REUSE_PGM:-0}"
 
 EVENT_MISSING_FRAMES="${EVENT_MISSING_FRAMES:-8}"
 EVENT_NEW_IOU="${EVENT_NEW_IOU:-0.15}"
@@ -65,6 +66,11 @@ require_file() {
         exit 1
     fi
 }
+
+if [[ "$REUSE_PGM" == "1" ]] && find "$PGM_DIR" -type f -name "*.pgm" -print -quit 2>/dev/null | grep -q .; then
+    echo "Reusing existing PGM files in: $PGM_DIR"
+    RUN_YOLO=0
+fi
 
 if [[ "$RUN_YOLO" == "1" ]]; then
     require_file "$YOLO_SCRIPT" "YOLO script not found"
