@@ -25,6 +25,10 @@
 #include <sstream>
 #include <fstream>
 #include <stdlib.h>
+#include <algorithm>
+#include <cctype>
+#include <dirent.h>
+#include <vector>
 
 #include <chrono>
 
@@ -395,6 +399,7 @@ class network_t
     int reusableCapacity[2];
     void* convWorkspace;
     size_t convWorkspaceCapacity;
+    bool warmedUp;
     void createHandles()
     {
         checkCUDNN( cudnnCreate(&cudnnHandle) );
@@ -452,6 +457,7 @@ class network_t
         reusableCapacity[1] = 0;
         convWorkspace = NULL;
         convWorkspaceCapacity = 0;
+        warmedUp = false;
         switch (sizeof(value_type))
         {
             case 2 : dataType = CUDNN_DATA_HALF; break;
@@ -756,23 +762,27 @@ class network_t
 
         n = c = 1; h = IMAGE_H; w = IMAGE_W;
 
-        convoluteForward(conv1, n, c, h, w, srcData, &dstData);
-        poolForward(n, c, h, w, dstData, &srcData);
-        convoluteForward(conv2, n, c, h, w, srcData, &dstData);
-        poolForward(n, c, h, w, dstData, &srcData);
-        fullyConnectedForward(ip1, n, c, h, w, srcData, &dstData);
-        activationForward(n, c, h, w, dstData, &srcData);
-        lrnForward(n, c, h, w, srcData, &dstData);
-        fullyConnectedForward(ip2, n, c, h, w, dstData, &srcData);
-        softmaxForward(n, c, h, w, srcData, &dstData);
-        checkCudaErrors( cudaDeviceSynchronize() );
+        if (!warmedUp)
+        {
+            convoluteForward(conv1, n, c, h, w, srcData, &dstData);
+            poolForward(n, c, h, w, dstData, &srcData);
+            convoluteForward(conv2, n, c, h, w, srcData, &dstData);
+            poolForward(n, c, h, w, dstData, &srcData);
+            fullyConnectedForward(ip1, n, c, h, w, srcData, &dstData);
+            activationForward(n, c, h, w, dstData, &srcData);
+            lrnForward(n, c, h, w, srcData, &dstData);
+            fullyConnectedForward(ip2, n, c, h, w, dstData, &srcData);
+            softmaxForward(n, c, h, w, srcData, &dstData);
+            checkCudaErrors( cudaDeviceSynchronize() );
+            warmedUp = true;
 
-        checkCudaErrors( cudaMemcpy(reusableData[0], imgData_h,
-                                    IMAGE_H*IMAGE_W*sizeof(value_type),
-                                    cudaMemcpyHostToDevice) );
-        srcData = reusableData[0];
-        dstData = reusableData[1];
-        n = c = 1; h = IMAGE_H; w = IMAGE_W;
+            checkCudaErrors( cudaMemcpy(reusableData[0], imgData_h,
+                                        IMAGE_H*IMAGE_W*sizeof(value_type),
+                                        cudaMemcpyHostToDevice) );
+            srcData = reusableData[0];
+            dstData = reusableData[1];
+            n = c = 1; h = IMAGE_H; w = IMAGE_W;
+        }
 
         auto infer_start = std::chrono::high_resolution_clock::now();
         convoluteForward(conv1, n, c, h, w, srcData, &dstData);
@@ -840,6 +850,54 @@ void displayUsage()
     printf( "help                   : display this help\n");
     printf( "device=<int>           : set the device to run the sample\n");
     printf( "image=<name>           : classify specific image\n");
+    printf( "images=<dir>           : classify all PGM images in a directory\n");
+    printf( "count=<int>            : limit images=<dir> mode to the first N files\n");
+}
+
+bool hasPgmExtension(const std::string& name)
+{
+    if (name.size() < 4)
+    {
+        return false;
+    }
+    std::string ext = name.substr(name.size() - 4);
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    return ext == ".pgm";
+}
+
+std::vector<std::string> listPgmFiles(const std::string& dirName, int limit)
+{
+    std::vector<std::string> files;
+    DIR* dir = opendir(dirName.c_str());
+    if (dir == NULL)
+    {
+        FatalError("Error opening image directory");
+    }
+
+    struct dirent* entry;
+    while ((entry = readdir(dir)) != NULL)
+    {
+        std::string name(entry->d_name);
+        if (!hasPgmExtension(name))
+        {
+            continue;
+        }
+        std::string path = dirName;
+        if (!path.empty() && path[path.size() - 1] != '/')
+        {
+            path += "/";
+        }
+        path += name;
+        files.push_back(path);
+    }
+    closedir(dir);
+
+    std::sort(files.begin(), files.end());
+    if (limit > 0 && static_cast<int>(files.size()) > limit)
+    {
+        files.resize(limit);
+    }
+    return files;
 }
  
  void printExecutionTime(
@@ -891,6 +949,42 @@ int main(int argc, char *argv[])
         checkCudaErrors( cudaSetDevice(device) );
     }
     std::cout << "Using device " << device << std::endl;
+
+    if (checkCmdLineFlag(argc, (const char **)argv, "images"))
+    {
+        char* image_dir;
+        getCmdLineArgumentString(argc, (const char **)argv,
+                                 "images", (char **) &image_dir);
+        int count = 0;
+        if (checkCmdLineFlag(argc, (const char **)argv, "count"))
+        {
+            count = getCmdLineArgumentInt(argc, (const char **)argv, "count");
+        }
+
+        std::vector<std::string> images = listPgmFiles(image_dir, count);
+        if (images.empty())
+        {
+            FatalError("No PGM images found");
+        }
+
+        network_t<float> mnist;
+        mnist.setConvolutionAlgorithm(CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_PRECOMP_GEMM);
+        Layer_t<float> conv1(1,20,5,conv1_bin,conv1_bias_bin,argv[0]);
+        Layer_t<float> conv2(20,50,5,conv2_bin,conv2_bias_bin,argv[0]);
+        Layer_t<float>   ip1(800,500,1,ip1_bin,ip1_bias_bin,argv[0]);
+        Layer_t<float>   ip2(500,10,1,ip2_bin,ip2_bias_bin,argv[0]);
+
+        for (size_t i = 0; i < images.size(); ++i)
+        {
+            std::cout << "\nBatch input: " << images[i] << std::endl;
+            int result = mnist.classify_example(images[i].c_str(), conv1, conv2, ip1, ip2);
+            std::cout << "Result of classification: " << result << std::endl;
+        }
+
+        printExecutionTime(program_start);
+        cudaDeviceReset();
+        exit(EXIT_SUCCESS);
+    }
     
     if (checkCmdLineFlag(argc, (const char **)argv, "image"))
     {

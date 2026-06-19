@@ -34,6 +34,7 @@ YOLO_HALF="${YOLO_HALF:-0}"
 RUN_YOLO="${RUN_YOLO:-1}"
 RUN_MNIST="${RUN_MNIST:-1}"
 REUSE_PGM="${REUSE_PGM:-0}"
+MNIST_BATCH="${MNIST_BATCH:-1}"
 
 EVENT_MISSING_FRAMES="${EVENT_MISSING_FRAMES:-8}"
 EVENT_NEW_IOU="${EVENT_NEW_IOU:-0.15}"
@@ -132,7 +133,14 @@ total=0
 correct=0
 total_infer_ms=0
 
-for img in "${images[@]}"; do
+if [[ "$MNIST_BATCH" == "1" ]]; then
+    mnist_output=$(cd "$SCRIPT_DIR" && "$EXE" images="$PGM_DIR" count="${#images[@]}")
+    mapfile -t batch_results < <(printf '%s\n' "$mnist_output" | awk '/Result of classification/ {print $4}')
+    mapfile -t batch_times < <(printf '%s\n' "$mnist_output" | awk '/Inference time:/ {print $3}')
+fi
+
+for idx in "${!images[@]}"; do
+    img="${images[$idx]}"
     echo "================================"
     if [[ "$img" == "$SCRIPT_DIR/"* ]]; then
         display_img="${img#$SCRIPT_DIR/}"
@@ -141,9 +149,14 @@ for img in "${images[@]}"; do
     fi
     echo "INPUT: $display_img"
 
-    output=$(cd "$SCRIPT_DIR" && "$EXE" image="$img")
-    result=$(printf '%s\n' "$output" | awk '/Result of classification/ {print $4; exit}')
-    infer_ms=$(printf '%s\n' "$output" | awk '/Inference time:/ {print $3; exit}')
+    if [[ "$MNIST_BATCH" == "1" ]]; then
+        result="${batch_results[$idx]:-}"
+        infer_ms="${batch_times[$idx]:-}"
+    else
+        output=$(cd "$SCRIPT_DIR" && "$EXE" image="$img")
+        result=$(printf '%s\n' "$output" | awk '/Result of classification/ {print $4; exit}')
+        infer_ms=$(printf '%s\n' "$output" | awk '/Inference time:/ {print $3; exit}')
+    fi
 
     gt="${answers[$total]:-NA}"
 
