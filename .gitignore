@@ -31,7 +31,8 @@ preview_*.mp4
 # YOLO training/inference outputs
 yolo/runs/
 runs/
-weights/
+weights/*
+!weights/.gitkeep
 *.pt
 *.onnx
 *.engine

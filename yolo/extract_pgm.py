@@ -8,9 +8,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-import cv2
-import numpy as np
-
 
 @dataclass
 class Candidate:
@@ -25,10 +22,11 @@ class Candidate:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Detect handwritten digits with YOLO and save one 28x28 PGM per appearance."
+        description="Detect handwritten digits with YOLO and save one 28x28 PGM per appearance.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--video", required=True, help="Input video path.")
-    parser.add_argument("--weights", required=True, help="YOLO weights path, .pt or .engine.")
+    parser.add_argument("--video", default="number.mp4", help="Input video path.")
+    parser.add_argument("--weights", default="", help="YOLO weights path, .pt or .engine.")
     parser.add_argument("--output", default="pgm_output", help="Output directory for PGM files.")
     parser.add_argument("--manifest", default="", help="Optional CSV manifest path.")
     parser.add_argument("--device", default="0", help="Ultralytics device value: 0, 1, cpu, etc.")
@@ -42,16 +40,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-event-frames", type=int, default=2, help="Minimum detections per saved event.")
     parser.add_argument("--end-missing-frames", type=int, default=8, help="Missing detections to end an event.")
     parser.add_argument("--event-missing-frames", type=int, help="Alias for --end-missing-frames.")
-    parser.add_argument("--new-event-iou", "--event-new-iou", dest="new_event_iou", type=float, default=0.05)
-    parser.add_argument("--new-event-center", "--event-new-center", dest="new_event_center", type=float, default=0.15)
-    parser.add_argument("--event-change-frames", type=int, default=3)
+    parser.add_argument("--new-event-iou", "--event-new-iou", dest="new_event_iou", type=float, default=0.15)
+    parser.add_argument("--new-event-center", "--event-new-center", dest="new_event_center", type=float, default=0.08)
+    parser.add_argument("--event-change-frames", type=int, default=2)
     parser.add_argument("--event-cooldown-frames", type=int, default=20)
     parser.add_argument("--event-present-frames", type=int, default=3)
     parser.add_argument("--event-confirm-conf", type=float, default=0.8)
     parser.add_argument("--event-confirm-frames", type=int, default=3)
-    parser.add_argument("--min-box-area-ratio", type=float, default=0.01)
-    parser.add_argument("--max-box-area-ratio", type=float, default=0.85)
-    parser.add_argument("--edge-margin-ratio", type=float, default=0.03)
+    parser.add_argument("--min-box-area-ratio", type=float, default=0.02)
+    parser.add_argument("--max-box-area-ratio", type=float, default=0.75)
+    parser.add_argument("--edge-margin-ratio", type=float, default=0.06)
     parser.add_argument("--pad", type=float, default=0.05, help="Box padding ratio before preprocessing.")
     return parser.parse_args()
 
@@ -194,6 +192,25 @@ def best_detection(model, frame: np.ndarray, args: argparse.Namespace) -> Candid
     )
 
 
+def find_weights(requested: str) -> Path:
+    if requested:
+        return Path(requested)
+
+    root = Path(__file__).resolve().parent.parent
+    candidates = [
+        root / "weights" / "yolo_digit_best.engine",
+        root / "weights" / "yolo_digit_best.pt",
+        root / "weights" / "best.engine",
+        root / "weights" / "best.pt",
+        root / "yolo" / "runs" / "detect" / "digit_mixed_big" / "weights" / "best.engine",
+        root / "yolo" / "runs" / "detect" / "digit_mixed_big" / "weights" / "best.pt",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
+
+
 def flush_event(
     best: Candidate | None,
     output_dir: Path,
@@ -224,11 +241,15 @@ def flush_event(
 
 def main() -> int:
     args = parse_args()
+    global cv2, np
+    import cv2
+    import numpy as np
+
     if args.event_missing_frames is not None:
         args.end_missing_frames = args.event_missing_frames
 
     video_path = Path(args.video)
-    weights_path = Path(args.weights)
+    weights_path = find_weights(args.weights)
     output_dir = Path(args.output)
     manifest_path = Path(args.manifest) if args.manifest else output_dir / "manifest.csv"
 

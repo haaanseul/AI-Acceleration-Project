@@ -17,6 +17,7 @@ if [[ -z "${YOLO_WEIGHTS:-}" ]]; then
         "$ROOT_DIR/weights/best.engine"
         "$ROOT_DIR/weights/best.pt"
         "$ROOT_DIR/yolo/runs/detect/digit_mixed_big/weights/best.engine"
+        "$ROOT_DIR/yolo/runs/detect/digit_mixed_big/weights/best.pt"
         "$ROOT_DIR/yolo/weights/digit_mixed_best.pt"
     )
     for candidate in "${weight_candidates[@]}"; do
@@ -37,16 +38,16 @@ RUN_YOLO="${RUN_YOLO:-1}"
 RUN_MNIST="${RUN_MNIST:-1}"
 
 EVENT_MISSING_FRAMES="${EVENT_MISSING_FRAMES:-8}"
-EVENT_NEW_IOU="${EVENT_NEW_IOU:-0.05}"
-EVENT_NEW_CENTER="${EVENT_NEW_CENTER:-0.15}"
-EVENT_CHANGE_FRAMES="${EVENT_CHANGE_FRAMES:-3}"
+EVENT_NEW_IOU="${EVENT_NEW_IOU:-0.15}"
+EVENT_NEW_CENTER="${EVENT_NEW_CENTER:-0.08}"
+EVENT_CHANGE_FRAMES="${EVENT_CHANGE_FRAMES:-2}"
 EVENT_COOLDOWN_FRAMES="${EVENT_COOLDOWN_FRAMES:-20}"
 EVENT_PRESENT_FRAMES="${EVENT_PRESENT_FRAMES:-3}"
 EVENT_CONFIRM_CONF="${EVENT_CONFIRM_CONF:-0.8}"
 EVENT_CONFIRM_FRAMES="${EVENT_CONFIRM_FRAMES:-3}"
-MIN_BOX_AREA_RATIO="${MIN_BOX_AREA_RATIO:-0.01}"
-MAX_BOX_AREA_RATIO="${MAX_BOX_AREA_RATIO:-0.85}"
-EDGE_MARGIN_RATIO="${EDGE_MARGIN_RATIO:-0.03}"
+MIN_BOX_AREA_RATIO="${MIN_BOX_AREA_RATIO:-0.02}"
+MAX_BOX_AREA_RATIO="${MAX_BOX_AREA_RATIO:-0.75}"
+EDGE_MARGIN_RATIO="${EDGE_MARGIN_RATIO:-0.06}"
 
 # Demo answer sequence. Override without editing the file, e.g.:
 # ANSWERS="6 6 1 5" bash mnistCUDNN/run_pgm_all.sh

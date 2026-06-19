@@ -5,15 +5,15 @@ import argparse
 import sys
 from pathlib import Path
 
-import cv2
-import numpy as np
-
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Create an annotated preview video for YOLO digit detection.")
-    parser.add_argument("--video", required=True, help="Input video path.")
-    parser.add_argument("--weights", required=True, help="YOLO weights path, .pt or .engine.")
-    parser.add_argument("--output", default="yolo_preview.mp4", help="Annotated output video path.")
+    parser = argparse.ArgumentParser(
+        description="Create an annotated preview video for YOLO digit detection.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument("--video", default="number.mp4", help="Input video path.")
+    parser.add_argument("--weights", default="", help="YOLO weights path, .pt or .engine.")
+    parser.add_argument("--output", default="preview_yolo.mp4", help="Annotated output video path.")
     parser.add_argument("--device", default="0")
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--conf", type=float, default=0.35)
@@ -21,16 +21,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-frames", type=int, default=0)
     parser.add_argument("--event-mode", default="box", choices=("box",), help="Kept for command compatibility; only box mode is supported.")
     parser.add_argument("--event-missing-frames", type=int, default=8)
-    parser.add_argument("--event-new-iou", type=float, default=0.05)
-    parser.add_argument("--event-new-center", type=float, default=0.15)
-    parser.add_argument("--event-change-frames", type=int, default=3)
+    parser.add_argument("--event-new-iou", type=float, default=0.15)
+    parser.add_argument("--event-new-center", type=float, default=0.08)
+    parser.add_argument("--event-change-frames", type=int, default=2)
     parser.add_argument("--event-cooldown-frames", type=int, default=20)
     parser.add_argument("--event-present-frames", type=int, default=3)
     parser.add_argument("--event-confirm-conf", type=float, default=0.8)
     parser.add_argument("--event-confirm-frames", type=int, default=3)
-    parser.add_argument("--min-box-area-ratio", type=float, default=0.01)
-    parser.add_argument("--max-box-area-ratio", type=float, default=0.85)
-    parser.add_argument("--edge-margin-ratio", type=float, default=0.03)
+    parser.add_argument("--min-box-area-ratio", type=float, default=0.02)
+    parser.add_argument("--max-box-area-ratio", type=float, default=0.75)
+    parser.add_argument("--edge-margin-ratio", type=float, default=0.06)
     return parser.parse_args()
 
 
@@ -99,10 +99,33 @@ def best_box(
     return tuple(float(v) for v in xyxy[index]), valid_count, float(confs[index])
 
 
+def find_weights(requested: str) -> Path:
+    if requested:
+        return Path(requested)
+
+    root = Path(__file__).resolve().parent.parent
+    candidates = [
+        root / "weights" / "yolo_digit_best.engine",
+        root / "weights" / "yolo_digit_best.pt",
+        root / "weights" / "best.engine",
+        root / "weights" / "best.pt",
+        root / "yolo" / "runs" / "detect" / "digit_mixed_big" / "weights" / "best.engine",
+        root / "yolo" / "runs" / "detect" / "digit_mixed_big" / "weights" / "best.pt",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
+
+
 def main() -> int:
     args = parse_args()
+    global cv2, np
+    import cv2
+    import numpy as np
+
     video_path = Path(args.video)
-    weights_path = Path(args.weights)
+    weights_path = find_weights(args.weights)
     output_path = Path(args.output)
 
     if not video_path.exists():
