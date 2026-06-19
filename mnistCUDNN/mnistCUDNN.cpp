@@ -391,6 +391,10 @@ class network_t
     cudnnActivationDescriptor_t  activDesc;
     cudnnLRNDescriptor_t   normDesc;
     cublasHandle_t cublasHandle;
+    value_type* reusableData[2];
+    int reusableCapacity[2];
+    void* convWorkspace;
+    size_t convWorkspaceCapacity;
     void createHandles()
     {
         checkCUDNN( cudnnCreate(&cudnnHandle) );
@@ -405,8 +409,27 @@ class network_t
 
         checkCublasErrors( cublasCreate(&cublasHandle) );
     }
+    void releaseReusableBuffers()
+    {
+        for (int i = 0; i < 2; ++i)
+        {
+            if (reusableData[i] != NULL)
+            {
+                checkCudaErrors( cudaFree(reusableData[i]) );
+                reusableData[i] = NULL;
+                reusableCapacity[i] = 0;
+            }
+        }
+        if (convWorkspace != NULL)
+        {
+            checkCudaErrors( cudaFree(convWorkspace) );
+            convWorkspace = NULL;
+            convWorkspaceCapacity = 0;
+        }
+    }
     void destroyHandles()
     {
+        releaseReusableBuffers();
         checkCUDNN( cudnnDestroyLRNDescriptor(normDesc) );
         checkCUDNN( cudnnDestroyPoolingDescriptor(poolingDesc) );
         checkCUDNN( cudnnDestroyActivationDescriptor(activDesc) );
@@ -423,6 +446,12 @@ class network_t
     network_t()
     {
         convAlgorithm = -1;
+        reusableData[0] = NULL;
+        reusableData[1] = NULL;
+        reusableCapacity[0] = 0;
+        reusableCapacity[1] = 0;
+        convWorkspace = NULL;
+        convWorkspaceCapacity = 0;
         switch (sizeof(value_type))
         {
             case 2 : dataType = CUDNN_DATA_HALF; break;
@@ -439,11 +468,57 @@ class network_t
     }
     void resize(int size, value_type **data)
     {
+        for (int i = 0; i < 2; ++i)
+        {
+            if (*data == reusableData[i])
+            {
+                if (reusableCapacity[i] < size)
+                {
+                    checkCudaErrors( cudaFree(reusableData[i]) );
+                    checkCudaErrors( cudaMalloc((void**)&reusableData[i], size*sizeof(value_type)) );
+                    reusableCapacity[i] = size;
+                    *data = reusableData[i];
+                }
+                return;
+            }
+        }
         if (*data != NULL)
         {
             checkCudaErrors( cudaFree(*data) );
         }
         checkCudaErrors( cudaMalloc((void**)data, size*sizeof(value_type)) );
+    }
+    void reserveReusableBuffers(int minSize)
+    {
+        for (int i = 0; i < 2; ++i)
+        {
+            if (reusableCapacity[i] < minSize)
+            {
+                if (reusableData[i] != NULL)
+                {
+                    checkCudaErrors( cudaFree(reusableData[i]) );
+                }
+                checkCudaErrors( cudaMalloc((void**)&reusableData[i], minSize*sizeof(value_type)) );
+                reusableCapacity[i] = minSize;
+            }
+        }
+    }
+    void* getConvolutionWorkspace(size_t sizeInBytes)
+    {
+        if (sizeInBytes == 0)
+        {
+            return NULL;
+        }
+        if (convWorkspaceCapacity < sizeInBytes)
+        {
+            if (convWorkspace != NULL)
+            {
+                checkCudaErrors( cudaFree(convWorkspace) );
+            }
+            checkCudaErrors( cudaMalloc(&convWorkspace, sizeInBytes) );
+            convWorkspaceCapacity = sizeInBytes;
+        }
+        return convWorkspace;
     }
     void setConvolutionAlgorithm(const cudnnConvolutionFwdAlgo_t& algo)
     {
@@ -586,20 +661,12 @@ class network_t
 
         resize(n*c*h*w, dstData);
         size_t sizeInBytes=0;
-        void* workSpace=NULL;
         checkCUDNN( cudnnGetConvolutionForwardWorkspaceSize(cudnnHandle,srcTensorDesc,filterDesc,convDesc,dstTensorDesc,algo,&sizeInBytes) );
-        if (sizeInBytes!=0)
-        {
-          checkCudaErrors( cudaMalloc(&workSpace,sizeInBytes) );
-        }
+        void* workSpace=getConvolutionWorkspace(sizeInBytes);
         scaling_type alpha = scaling_type(1);
         scaling_type beta  = scaling_type(0);
         checkCUDNN( cudnnConvolutionForward(cudnnHandle,&alpha,srcTensorDesc,srcData,filterDesc,conv.data_d,convDesc,algo,workSpace,sizeInBytes,&beta,dstTensorDesc,*dstData) );
         addBias(dstTensorDesc, conv, c, *dstData);
-        if (sizeInBytes!=0)
-        {
-          checkCudaErrors( cudaFree(workSpace) );
-        }
     }
 
     void poolForward( int& n, int& c, int& h, int& w,
@@ -680,11 +747,31 @@ class network_t
 
         std::cout << "Performing forward propagation ...\n";
 
-        checkCudaErrors( cudaMalloc((void**)&srcData, IMAGE_H*IMAGE_W*sizeof(value_type)) );
+        reserveReusableBuffers(20*24*24);
+        srcData = reusableData[0];
+        dstData = reusableData[1];
         checkCudaErrors( cudaMemcpy(srcData, imgData_h,
                                     IMAGE_H*IMAGE_W*sizeof(value_type),
                                     cudaMemcpyHostToDevice) );
 
+        n = c = 1; h = IMAGE_H; w = IMAGE_W;
+
+        convoluteForward(conv1, n, c, h, w, srcData, &dstData);
+        poolForward(n, c, h, w, dstData, &srcData);
+        convoluteForward(conv2, n, c, h, w, srcData, &dstData);
+        poolForward(n, c, h, w, dstData, &srcData);
+        fullyConnectedForward(ip1, n, c, h, w, srcData, &dstData);
+        activationForward(n, c, h, w, dstData, &srcData);
+        lrnForward(n, c, h, w, srcData, &dstData);
+        fullyConnectedForward(ip2, n, c, h, w, dstData, &srcData);
+        softmaxForward(n, c, h, w, srcData, &dstData);
+        checkCudaErrors( cudaDeviceSynchronize() );
+
+        checkCudaErrors( cudaMemcpy(reusableData[0], imgData_h,
+                                    IMAGE_H*IMAGE_W*sizeof(value_type),
+                                    cudaMemcpyHostToDevice) );
+        srcData = reusableData[0];
+        dstData = reusableData[1];
         n = c = 1; h = IMAGE_H; w = IMAGE_W;
 
         auto infer_start = std::chrono::high_resolution_clock::now();
@@ -724,11 +811,12 @@ class network_t
             if (toReal(result[id]) < toReal(result[i])) id = i;
         }
 
-        std::cout << "Resulting weights from Softmax:" << std::endl;
-        printDeviceVector(n*c*h*w, dstData);
-
-        checkCudaErrors( cudaFree(srcData) );
-        checkCudaErrors( cudaFree(dstData) );
+        const char* verboseSoftmax = getenv("MNIST_VERBOSE_SOFTMAX");
+        if (verboseSoftmax != NULL && verboseSoftmax[0] == '1')
+        {
+            std::cout << "Resulting weights from Softmax:" << std::endl;
+            printDeviceVector(n*c*h*w, dstData);
+        }
         return id;
     }
 };
