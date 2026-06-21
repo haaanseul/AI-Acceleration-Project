@@ -30,6 +30,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mnist-cache", default="mnist.npz", help="Local cache path for downloaded MNIST npz.")
     parser.add_argument("--mnist-digits", default="", help="Comma-separated MNIST digits to synthesize, e.g. 1,3,5.")
     parser.add_argument("--mnist-count-per-digit", type=int, default=60)
+    parser.add_argument(
+        "--mnist-digit-counts",
+        default="",
+        help="Optional per-digit synthetic counts, e.g. 1:300,3:120,5:120.",
+    )
     parser.add_argument("--mnist-size", default="960x1280", help="Synthetic image size as HEIGHTxWIDTH.")
     parser.add_argument("--mnist-height-ratio-min", type=float, default=0.45, help="Minimum synthetic MNIST digit height relative to image height.")
     parser.add_argument("--mnist-height-ratio-max", type=float, default=0.70, help="Maximum synthetic MNIST digit height relative to image height.")
@@ -145,6 +150,28 @@ def parse_digits(digits_text: str) -> list[int]:
     return digits
 
 
+def parse_digit_counts(digits: list[int], default_count: int, counts_text: str) -> dict[int, int]:
+    counts = {digit: default_count for digit in digits}
+    if not counts_text.strip():
+        return counts
+    for item in counts_text.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            digit_text, count_text = item.split(":", 1)
+            digit = int(digit_text.strip())
+            count = int(count_text.strip())
+        except ValueError as exc:
+            raise SystemExit("--mnist-digit-counts must look like 1:300,3:120,5:120") from exc
+        if digit not in counts:
+            raise SystemExit(f"--mnist-digit-counts includes digit {digit}, but --mnist-digits does not")
+        if count < 0:
+            raise SystemExit("--mnist-digit-counts cannot contain negative counts")
+        counts[digit] = count
+    return counts
+
+
 def download_mnist(cache_path: Path) -> Path:
     if cache_path.exists():
         return cache_path
@@ -222,6 +249,7 @@ def synthesize_negative_image(height: int, width: int, index: int) -> np.ndarray
 
 def synthesize_mnist_image(
     digit_image: np.ndarray,
+    digit: int,
     height: int,
     width: int,
     height_ratio_min: float,
@@ -236,6 +264,8 @@ def synthesize_mnist_image(
     crop = np.pad(crop, ((5, 5), (5, 5)), mode="constant", constant_values=0)
     ratio_min = max(0.08, min(height_ratio_min, height_ratio_max))
     ratio_max = min(0.90, max(height_ratio_min, height_ratio_max))
+    if digit == 1:
+        ratio_min = min(ratio_max, max(ratio_min, 0.55))
     target_h = random.randint(int(height * ratio_min), int(height * ratio_max))
     scale = target_h / max(1, crop.shape[0])
     target_w = max(8, int(round(crop.shape[1] * scale)))
@@ -254,6 +284,12 @@ def synthesize_mnist_image(
     rotation[0, 2] += rot_w / 2.0 - center[0]
     rotation[1, 2] += rot_h / 2.0 - center[1]
     alpha = cv2.warpAffine(alpha, rotation, (rot_w, rot_h), flags=cv2.INTER_LINEAR, borderValue=0)
+    if digit == 1:
+        kernel_size = random.choice((3, 5, 7))
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+        iterations = random.choice((1, 1, 2))
+        alpha = cv2.dilate(alpha, kernel, iterations=iterations)
+        alpha = cv2.GaussianBlur(alpha, (3, 3), 0)
 
     background = synthetic_background(height, width)
     margin = max(32, int(min(height, width) * 0.04))
@@ -289,6 +325,7 @@ def add_mnist_synthetic(
     cache_path: Path,
     digits: list[int],
     count_per_digit: int,
+    digit_counts: dict[int, int],
     val_ratio: float,
     size_text: str,
     height_ratio_min: float,
@@ -303,9 +340,9 @@ def add_mnist_synthetic(
     total = 0
     for digit in digits:
         digit_samples = samples[digit]
-        for i in range(count_per_digit):
+        for i in range(digit_counts.get(digit, count_per_digit)):
             sample = digit_samples[random.randrange(len(digit_samples))]
-            image, box = synthesize_mnist_image(sample, height, width, height_ratio_min, height_ratio_max)
+            image, box = synthesize_mnist_image(sample, digit, height, width, height_ratio_min, height_ratio_max)
             split = "val" if random.random() < val_ratio else "train"
             out_name = f"mnist_{digit}_{start_index + total:04d}.jpg"
             image_path = dataset_dir / "images" / split / out_name
@@ -396,11 +433,18 @@ def main() -> int:
         written += 1
 
     write_yaml(dataset_dir)
+    mnist_digits = parse_digits(args.mnist_digits)
+    mnist_digit_counts = parse_digit_counts(
+        mnist_digits,
+        args.mnist_count_per_digit,
+        args.mnist_digit_counts,
+    )
     mnist_written = add_mnist_synthetic(
         dataset_dir=dataset_dir,
         cache_path=Path(args.mnist_cache),
-        digits=parse_digits(args.mnist_digits),
+        digits=mnist_digits,
         count_per_digit=args.mnist_count_per_digit,
+        digit_counts=mnist_digit_counts,
         val_ratio=args.val_ratio,
         size_text=args.mnist_size,
         height_ratio_min=args.mnist_height_ratio_min,
