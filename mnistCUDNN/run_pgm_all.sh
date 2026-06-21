@@ -31,6 +31,7 @@ YOLO_DEVICE="${YOLO_DEVICE:-0}"
 YOLO_IMGSZ="${YOLO_IMGSZ:-640}"
 YOLO_FRAME_STRIDE="${YOLO_FRAME_STRIDE:-1}"
 YOLO_HALF="${YOLO_HALF:-0}"
+YOLO_PAD="${YOLO_PAD:-0.00}"
 RUN_YOLO="${RUN_YOLO:-1}"
 RUN_MNIST="${RUN_MNIST:-1}"
 REUSE_PGM="${REUSE_PGM:-0}"
@@ -102,6 +103,7 @@ if [[ "$RUN_YOLO" == "1" ]]; then
         --min-box-area-ratio "$MIN_BOX_AREA_RATIO"
         --max-box-area-ratio "$MAX_BOX_AREA_RATIO"
         --edge-margin-ratio "$EDGE_MARGIN_RATIO"
+        --pad "$YOLO_PAD"
     )
     if [[ "$YOLO_HALF" == "1" ]]; then
         yolo_args+=(--half)
