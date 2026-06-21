@@ -103,9 +103,7 @@ def preprocess_digit(frame: np.ndarray, xyxy: tuple[float, float, float, float],
     gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
     gray = cv2.GaussianBlur(gray, (3, 3), 0)
     quality = float(cv2.Laplacian(gray, cv2.CV_64F).var())
-    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    if np.count_nonzero(binary) > binary.size // 2:
-        binary = 255 - binary
+    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
     kernel = np.ones((2, 2), np.uint8)
     binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
@@ -219,9 +217,11 @@ def flush_event(
     best: Candidate | None,
     output_dir: Path,
     event_index: int,
+    event_id: int,
+    saved_event_ids: set[int],
     rows: list[dict[str, str]],
 ) -> int:
-    if best is None:
+    if best is None or event_id in saved_event_ids:
         return event_index
     filename = (
         f"frame_{best.frame_index:06d}_digit_{best.label}_"
@@ -231,7 +231,8 @@ def flush_event(
     write_pgm(path, best.pgm)
     rows.append(
         {
-            "event": str(event_index),
+            "event": str(event_id),
+            "save_index": str(event_index),
             "frame": str(best.frame_index),
             "class_id": str(best.cls_id),
             "label": best.label,
@@ -239,6 +240,7 @@ def flush_event(
             "file": str(path),
         }
     )
+    saved_event_ids.add(event_id)
     print(f"saved: {path}")
     return event_index + 1
 
@@ -304,6 +306,8 @@ def main() -> int:
     active = False
     missing_frames = 0
     event_index = 0
+    current_event_id = -1
+    saved_event_ids: set[int] = set()
     event_frames = 0
     event_start_frame = -10**9
     best: Candidate | None = None
@@ -333,7 +337,14 @@ def main() -> int:
                 missing_frames += 1
                 if missing_frames >= args.end_missing_frames:
                     if event_frames >= args.min_event_frames:
-                        event_index = flush_event(best or fallback, output_dir, event_index, rows)
+                        event_index = flush_event(
+                            best or fallback,
+                            output_dir,
+                            event_index,
+                            current_event_id,
+                            saved_event_ids,
+                            rows,
+                        )
                         if args.target_count and event_index >= args.target_count:
                             break
                     active = False
@@ -359,6 +370,7 @@ def main() -> int:
                 and frame_index - last_event_frame >= args.event_cooldown_frames
             ):
                 last_event_frame = frame_index
+                current_event_id += 1
                 active = True
                 event_start_frame = frame_index
                 event_frames = 0
@@ -380,10 +392,18 @@ def main() -> int:
 
             if changed_frames >= args.event_change_frames and confirm_frames >= args.event_confirm_frames:
                 if event_frames >= args.min_event_frames:
-                    event_index = flush_event(best or fallback, output_dir, event_index, rows)
+                    event_index = flush_event(
+                        best or fallback,
+                        output_dir,
+                        event_index,
+                        current_event_id,
+                        saved_event_ids,
+                        rows,
+                    )
                     if args.target_count and event_index >= args.target_count:
                         break
                 last_event_frame = frame_index
+                current_event_id += 1
                 active = True
                 event_start_frame = frame_index
                 event_frames = 0
@@ -400,7 +420,14 @@ def main() -> int:
 
     if active and (not args.target_count or event_index < args.target_count):
         if event_frames >= args.min_event_frames:
-            event_index = flush_event(best or fallback, output_dir, event_index, rows)
+            event_index = flush_event(
+                best or fallback,
+                output_dir,
+                event_index,
+                current_event_id,
+                saved_event_ids,
+                rows,
+            )
 
     if rows:
         with manifest_path.open("w", newline="", encoding="utf-8") as f:
