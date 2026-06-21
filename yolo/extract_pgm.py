@@ -103,11 +103,12 @@ def preprocess_digit(frame: np.ndarray, xyxy: tuple[float, float, float, float],
     gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
     gray = cv2.GaussianBlur(gray, (3, 3), 0)
     quality = float(cv2.Laplacian(gray, cv2.CV_64F).var())
-    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    threshold, _ = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    threshold = max(0.0, float(threshold) - 12.0)
+    binary = np.where(gray <= threshold, 255, 0).astype(np.uint8)
 
     kernel = np.ones((2, 2), np.uint8)
     binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
-    binary = remove_large_blobs(binary)
 
     ys, xs = np.where(binary > 0)
     if len(xs) == 0 or len(ys) == 0:
@@ -126,36 +127,6 @@ def preprocess_digit(frame: np.ndarray, xyxy: tuple[float, float, float, float],
     offset = (28 - target_side) // 2
     canvas[offset : offset + target_side, offset : offset + target_side] = resized
     return canvas, quality
-
-
-def remove_large_blobs(binary: np.ndarray) -> np.ndarray:
-    height, width = binary.shape[:2]
-    cleaned = binary.copy()
-
-    # Filled board edges/shadows create dense horizontal blocks, unlike thin digit strokes.
-    dense_rows = np.count_nonzero(cleaned, axis=1) > int(width * 0.45)
-    cleaned[dense_rows, :] = 0
-
-    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(cleaned, connectivity=8)
-    filtered = np.zeros_like(cleaned)
-    image_area = max(1, height * width)
-
-    for label in range(1, num_labels):
-        x, y, w, h, area = stats[label]
-        box_area = max(1, int(w * h))
-        fill_ratio = float(area) / box_area
-        area_ratio = float(area) / image_area
-
-        if area_ratio > 0.18:
-            continue
-        if area_ratio > 0.05 and fill_ratio > 0.45:
-            continue
-        if h > height * 0.35 and w > width * 0.35 and fill_ratio > 0.30:
-            continue
-
-        filtered[labels == label] = 255
-
-    return filtered
 
 
 def write_pgm(path: Path, image: np.ndarray) -> None:
