@@ -24,6 +24,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--val-ratio", type=float, default=0.2)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-size", type=int, default=1280, help="Resize long side for training images.")
+    parser.add_argument("--real-augment", type=int, default=1, help="Number of weak augmentations per real zip image, including the original.")
+    parser.add_argument(
+        "--real-augment-counts",
+        default="",
+        help="Optional per-zip real augmentation counts, e.g. 1.zip:16,5.zip:10,6.zip:2,8.zip:2.",
+    )
+    parser.add_argument(
+        "--augment-zip",
+        action="append",
+        default=[],
+        help="Apply --real-augment only to matching zip file names. Can be repeated, e.g. --augment-zip 1.zip.",
+    )
     parser.add_argument("--pad-ratio", type=float, default=0.08, help="Extra padding around detected foreground.")
     parser.add_argument("--min-area-ratio", type=float, default=0.0002)
     parser.add_argument("--clear-output", action="store_true", help="Remove existing output dataset first.")
@@ -47,8 +59,8 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def read_zip_images(zip_paths: list[str]) -> list[tuple[str, np.ndarray]]:
-    images: list[tuple[str, np.ndarray]] = []
+def read_zip_images(zip_paths: list[str]) -> list[tuple[str, np.ndarray, str]]:
+    images: list[tuple[str, np.ndarray, str]] = []
     for zip_path in zip_paths:
         with zipfile.ZipFile(zip_path) as zf:
             for name in zf.namelist():
@@ -60,7 +72,7 @@ def read_zip_images(zip_paths: list[str]) -> list[tuple[str, np.ndarray]]:
                     print(f"skip unreadable image: {zip_path}:{name}")
                     continue
                 stem = Path(zip_path).stem + "_" + Path(name).stem
-                images.append((stem, image))
+                images.append((stem, image, Path(zip_path).name))
     return images
 
 
@@ -72,6 +84,48 @@ def resize_long_side(image: np.ndarray, max_size: int) -> np.ndarray:
     scale = max_size / float(long_side)
     new_size = (max(1, int(round(width * scale))), max(1, int(round(height * scale))))
     return cv2.resize(image, new_size, interpolation=cv2.INTER_AREA)
+
+
+def augment_real_image(image: np.ndarray, index: int) -> np.ndarray:
+    if index == 0:
+        return image.copy()
+
+    height, width = image.shape[:2]
+    scale = random.uniform(0.92, 1.12)
+    angle = random.uniform(-8.0, 8.0)
+    tx = random.uniform(-0.04, 0.04) * width
+    ty = random.uniform(-0.04, 0.04) * height
+    center = (width * 0.5, height * 0.5)
+    matrix = cv2.getRotationMatrix2D(center, angle, scale)
+    matrix[0, 2] += tx
+    matrix[1, 2] += ty
+    border = tuple(int(v) for v in np.median(image.reshape(-1, 3), axis=0))
+    aug = cv2.warpAffine(
+        image,
+        matrix,
+        (width, height),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=border,
+    )
+
+    alpha = random.uniform(0.85, 1.15)
+    beta = random.uniform(-18.0, 18.0)
+    aug = cv2.convertScaleAbs(aug, alpha=alpha, beta=beta)
+
+    if random.random() < 0.45:
+        aug = cv2.GaussianBlur(aug, (3, 3), 0)
+    if random.random() < 0.60:
+        noise = np.random.normal(0, random.uniform(1.0, 5.0), aug.shape).astype(np.int16)
+        aug = np.clip(aug.astype(np.int16) + noise, 0, 255).astype(np.uint8)
+    if random.random() < 0.30:
+        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), random.randint(70, 92)]
+        ok, encoded = cv2.imencode(".jpg", aug, encode_param)
+        if ok:
+            decoded = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
+            if decoded is not None:
+                aug = decoded
+    return aug
 
 
 def foreground_box(image: np.ndarray, pad_ratio: float, min_area_ratio: float) -> tuple[float, float, float, float] | None:
@@ -169,6 +223,25 @@ def parse_digit_counts(digits: list[int], default_count: int, counts_text: str) 
         if count < 0:
             raise SystemExit("--mnist-digit-counts cannot contain negative counts")
         counts[digit] = count
+    return counts
+
+
+def parse_zip_counts(counts_text: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    if not counts_text.strip():
+        return counts
+    for item in counts_text.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            name_text, count_text = item.split(":", 1)
+            count = int(count_text.strip())
+        except ValueError as exc:
+            raise SystemExit("--real-augment-counts must look like 1.zip:16,5.zip:10") from exc
+        if count < 1:
+            raise SystemExit("--real-augment-counts values must be at least 1")
+        counts[Path(name_text.strip()).name] = count
     return counts
 
 
@@ -293,6 +366,17 @@ def synthesize_mnist_image(
 
     background = synthetic_background(height, width)
     margin = max(32, int(min(height, width) * 0.04))
+    max_alpha_w = max(8, width - 2 * margin)
+    max_alpha_h = max(8, height - 2 * margin)
+    alpha_h, alpha_w = alpha.shape[:2]
+    if alpha_w > max_alpha_w or alpha_h > max_alpha_h:
+        scale = min(max_alpha_w / alpha_w, max_alpha_h / alpha_h)
+        alpha = cv2.resize(
+            alpha,
+            (max(1, int(round(alpha_w * scale))), max(1, int(round(alpha_h * scale)))),
+            interpolation=cv2.INTER_AREA,
+        )
+    rot_h, rot_w = alpha.shape[:2]
     max_x = max(margin, width - rot_w - margin)
     max_y = max(margin, height - rot_h - margin)
     x = random.randint(margin, max_x)
@@ -406,31 +490,40 @@ def main() -> int:
     if not images:
         raise SystemExit("No images found in input zip files.")
     random.shuffle(images)
+    augment_zip_names = {Path(name).name for name in args.augment_zip}
+    augment_counts = parse_zip_counts(args.real_augment_counts)
 
     val_count = max(1, int(round(len(images) * args.val_ratio)))
-    val_names = {name for name, _ in images[:val_count]}
+    val_names = {name for name, _, _ in images[:val_count]}
 
     written = 0
     fallback = 0
-    for index, (name, image) in enumerate(images):
+    for index, (name, image, zip_name) in enumerate(images):
         image = resize_long_side(image, args.max_size)
-        height, width = image.shape[:2]
+        if zip_name in augment_counts:
+            augment_count = augment_counts[zip_name]
+        else:
+            use_augment = not augment_zip_names or zip_name in augment_zip_names
+            augment_count = max(1, args.real_augment if use_augment else 1)
+        for aug_index in range(augment_count):
+            aug_image = augment_real_image(image, aug_index)
+            height, width = aug_image.shape[:2]
 
-        box = foreground_box(image, args.pad_ratio, args.min_area_ratio)
-        if box is None:
-            if not args.full_image_box:
-                print(f"skip no foreground: {name}")
-                continue
-            box = (0.0, 0.0, float(width), float(height))
-            fallback += 1
+            box = foreground_box(aug_image, args.pad_ratio, args.min_area_ratio)
+            if box is None:
+                if not args.full_image_box:
+                    print(f"skip no foreground: {name} aug={aug_index}")
+                    continue
+                box = (0.0, 0.0, float(width), float(height))
+                fallback += 1
 
-        split = "val" if name in val_names else "train"
-        out_name = f"digit_{index:04d}.jpg"
-        image_path = dataset_dir / "images" / split / out_name
-        label_path = dataset_dir / "labels" / split / out_name.replace(".jpg", ".txt")
-        cv2.imwrite(str(image_path), image, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
-        label_path.write_text(yolo_label(box, width, height), encoding="utf-8")
-        written += 1
+            split = "val" if name in val_names else "train"
+            out_name = f"digit_{written:04d}.jpg"
+            image_path = dataset_dir / "images" / split / out_name
+            label_path = dataset_dir / "labels" / split / out_name.replace(".jpg", ".txt")
+            cv2.imwrite(str(image_path), aug_image, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
+            label_path.write_text(yolo_label(box, width, height), encoding="utf-8")
+            written += 1
 
     write_yaml(dataset_dir)
     mnist_digits = parse_digits(args.mnist_digits)
